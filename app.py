@@ -1,26 +1,80 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request, render_template
+from flask_sqlalchemy import SQLAlchemy
+import os
 
 app = Flask(__name__)
 
-# Toto je naše "falešná" databáze pro dnešek (jen seznam v paměti)
-prikazy = [
-    {"id": 1, "cmd": "ls -la", "popis": "list all files with details"},
-    {"id": 2, "cmd": "docker ps", "popis": "list running Docker containers"},
-    {"id": 3, "cmd": "git status", "popis": "show the working tree status"},
-    {"id": 4, "cmd": "htop", "popis": "interactive process viewer"},
-    {"id": 5, "cmd": "curl http://example.com", "popis": "fetch a URL content"}
-]
+    # Database configuration
+basedir = os.path.abspath(os.path.dirname(__file__))
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'database.db')
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# Hlavní stránka
+db = SQLAlchemy(app)
+
+# Database model
+class Command(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    cmd = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.String(500), nullable=False)
+
+    def to_dict(self):
+        return {
+            "id": self.id, 
+            "cmd": self.cmd, 
+            "description": self.description
+        }
+
+# Create database tables
+with app.app_context():
+    db.create_all()
+
 @app.route('/')
 def home():
-    return "Vítej v CommandVault! Jdi na /api/prikazy pro data."
+    return render_template('index.html')
 
-# API endpoint - vrátí data ve formátu JSON (pro budoucí JavaScript)
-@app.route('/api/prikazy')
-def get_prikazy():
-    return jsonify(prikazy)
+@app.route('/api/commands', methods=['GET'])
+def get_commands():
+    all_commands = Command.query.all()
+    return jsonify([c.to_dict() for c in all_commands])
+
+@app.route('/api/commands', methods=['POST'])
+def add_command():
+    data = request.get_json()
+    new_command = Command(
+        cmd=data['cmd'], 
+        description=data['description']
+    )
+    db.session.add(new_command)
+    db.session.commit()
+    return jsonify(new_command.to_dict()), 201
+
+@app.route('/api/commands/<int:command_id>', methods=['DELETE'])
+def delete_command(command_id):
+    command = Command.query.get(command_id)
+    if command:
+        db.session.delete(command)
+        db.session.commit()
+        return jsonify({"message": "Command deleted"}), 200
+    return jsonify({"error": "Command not found"}), 404
+
+@app.route('/api/commands/<int:command_id>', methods=['PUT'])
+def update_command(command_id):
+    command = Command.query.get(command_id)
+    if not command:
+        return jsonify({"error": "Not found"}), 404
+
+    data = request.get_json()
+    
+    # Ladicí výpis do terminálu - uvidíš, co Python přijal
+    print(f"Updating ID {command_id} with data: {data}")
+
+    command.cmd = data['cmd']
+    command.description = data['description'] # Musí odpovídat tvému modelu!
+
+    db.session.commit() # Bez tohoto se nic v souboru .db nezmění
+    return jsonify(command.to_dict())
+
+
 
 if __name__ == '__main__':
-    # debug=True zajistí, že se server restartuje, když změníš kód
-    app.run(debug=True, port=5000)
+    app.run(debug=True, host='0.0.0.0', port=5000)
